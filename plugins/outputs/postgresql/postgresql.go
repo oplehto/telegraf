@@ -405,7 +405,6 @@ func (p *Postgresql) Write(metrics []telegraf.Metric) error {
 		}
 		table_and_cols = fmt.Sprintf("%s(%s)", p.fullTableName(tablename), strings.Join(quoted_columns, ","))
 		batches[table_and_cols] = append(batches[table_and_cols], values...)
-		fmt.Println(batches[table_and_cols])
 		for i, _ := range columns {
 			i += len(params[table_and_cols]) * len(columns)
 			placeholder = append(placeholder, fmt.Sprintf("$%d", i+1))
