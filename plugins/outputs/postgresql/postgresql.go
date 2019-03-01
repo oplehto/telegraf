@@ -21,6 +21,7 @@ type Postgresql struct {
 	TagsAsForeignkeys bool
 	TagsAsJsonb       bool
 	FieldsAsJsonb     bool
+	StoreLatest       bool
 	TableTemplate     string
 	TagTableSuffix    string
 	Tables            map[string]bool
@@ -404,6 +405,7 @@ func (p *Postgresql) Write(metrics []telegraf.Metric) error {
 		}
 		table_and_cols = fmt.Sprintf("%s(%s)", p.fullTableName(tablename), strings.Join(quoted_columns, ","))
 		batches[table_and_cols] = append(batches[table_and_cols], values...)
+		fmt.Println(batches[table_and_cols])
 		for i, _ := range columns {
 			i += len(params[table_and_cols]) * len(columns)
 			placeholder = append(placeholder, fmt.Sprintf("$%d", i+1))
@@ -414,7 +416,12 @@ func (p *Postgresql) Write(metrics []telegraf.Metric) error {
 	}
 
 	for table_and_cols, values := range batches {
-		sql := fmt.Sprintf("INSERT INTO %s VALUES (%s)", table_and_cols, strings.Join(params[table_and_cols], "),("))
+		sql := ""
+		if true {
+			sql = fmt.Sprintf("INSERT INTO %s VALUES (%s) ON CONFLICT (bu,task_id,job_id,host) DO UPDATE SET mem_usage=EXCLUDED.mem_usage,mem_max=EXCLUDED.mem_max,time=EXCLUDED.time", table_and_cols, strings.Join(params[table_and_cols], "),("))
+		} else {
+			sql = fmt.Sprintf("INSERT INTO %s VALUES (%s)", table_and_cols, strings.Join(params[table_and_cols], "),("))
+		}
 		_, err := p.db.Exec(sql, values...)
 		if err != nil {
 			// check if insert error was caused by column mismatch
