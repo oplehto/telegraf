@@ -14,6 +14,7 @@ import (
 
 type Interrupts struct {
 	CpuAsTag bool `toml:"cpu_as_tag"`
+	DropZero bool `toml:"drop_zero"`
 }
 
 type IRQ struct {
@@ -36,6 +37,10 @@ const sampleConfig = `
   ## true in a future version.  It is recommended to set to true on new
   ## deployments.
   # cpu_as_tag = false
+  ##
+  ##
+  ## Drop zero values
+  # drop_zero = false
 
   ## To filter which IRQs to collect, make use of tagpass / tagdrop, i.e.
   # [inputs.interrupts.tagdrop]
@@ -121,12 +126,12 @@ func (s *Interrupts) Gather(acc telegraf.Accumulator) error {
 			acc.AddError(fmt.Errorf("Parsing %s: %s", file, err))
 			continue
 		}
-		reportMetrics(measurement, irqs, acc, s.CpuAsTag)
+		reportMetrics(measurement, irqs, acc, s.CpuAsTag, s.DropZero)
 	}
 	return nil
 }
 
-func reportMetrics(measurement string, irqs []IRQ, acc telegraf.Accumulator, cpusAsTags bool) {
+func reportMetrics(measurement string, irqs []IRQ, acc telegraf.Accumulator, cpusAsTags bool, dropZero bool) {
 	for _, irq := range irqs {
 		tags, fields := gatherTagsFields(irq)
 		if cpusAsTags {
@@ -135,7 +140,11 @@ func reportMetrics(measurement string, irqs []IRQ, acc telegraf.Accumulator, cpu
 				for k, v := range tags {
 					cpuTags[k] = v
 				}
-				acc.AddFields(measurement, map[string]interface{}{"count": count}, cpuTags)
+				if count == 0 && dropZero {
+					continue
+				} else {
+					acc.AddFields(measurement, map[string]interface{}{"count": count}, cpuTags)
+				}
 			}
 		} else {
 			acc.AddFields(measurement, fields, tags)
