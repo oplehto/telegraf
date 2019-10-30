@@ -2,8 +2,12 @@ package cpu
 
 import (
 	"fmt"
+	"io/ioutil"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/grafana/grafana/pkg/cmd/grafana-cli/logger"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/inputs/system"
@@ -140,6 +144,61 @@ func totalCpuTime(t cpu.TimesStat) float64 {
 func activeCpuTime(t cpu.TimesStat) float64 {
 	active := totalCpuTime(t) - t.Idle
 	return active
+}
+
+func isolCpus() []int {
+	isolCpuInt := []int{}
+	buf, err := ioutil.ReadFile("/sys/devices/system/cpu/isolated")
+	if err != nil {
+		fmt.Errorf("Failed to read /sys/devices/system/cpu/isolated")
+		return []int{}
+	}
+	isolCpu := strings.TrimSpace(string(buf))
+	if isolCpu != "" {
+		isolCpuInt, err = parseCpuset(isolCpu)
+		if err != nil {
+			logger.Errorf("Error parsing isolated CPU set: %s", string(isolCpu))
+			return []int{}
+		}
+	}
+	fmt.Println
+	return isolCpuInt
+}
+
+func parseCpuset(cpu string) ([]int, error) {
+	cpus := []int{}
+	chunks := strings.Split(cpu, ",")
+	for _, chunk := range chunks {
+		if strings.Contains(chunk, "-") {
+			// Range
+			fields := strings.SplitN(chunk, "-", 2)
+			if len(fields) != 2 {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+
+			low, err := strconv.Atoi(fields[0])
+			if err != nil {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+
+			high, err := strconv.Atoi(fields[1])
+			if err != nil {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+
+			for i := low; i <= high; i++ {
+				cpus = append(cpus, i)
+			}
+		} else {
+			// Simple entry
+			nr, err := strconv.Atoi(chunk)
+			if err != nil {
+				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
+			}
+			cpus = append(cpus, nr)
+		}
+	}
+	return cpus, nil
 }
 
 func init() {
