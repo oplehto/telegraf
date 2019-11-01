@@ -2,12 +2,8 @@ package cpu
 
 import (
 	"fmt"
-	"io/ioutil"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/grafana/grafana/pkg/cmd/grafana-cli/logger"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/inputs/system"
@@ -17,18 +13,22 @@ import (
 type CPUStats struct {
 	ps        system.PS
 	lastStats map[string]cpu.TimesStat
+	isolCpus 	   map[int]bool
 
 	PerCPU         bool `toml:"percpu"`
 	TotalCPU       bool `toml:"totalcpu"`
 	CollectCPUTime bool `toml:"collect_cpu_time"`
 	ReportActive   bool `toml:"report_active"`
+	ReportIsolated   bool `toml:"report_isolated"`
 }
 
 func NewCPUStats(ps system.PS) *CPUStats {
 	return &CPUStats{
+		isolCpus:		isolCpus(),
 		ps:             ps,
 		CollectCPUTime: true,
 		ReportActive:   true,
+		ReportIsolated: false,
 	}
 }
 
@@ -45,6 +45,8 @@ var sampleConfig = `
   collect_cpu_time = false
   ## If true, compute and report the sum of all non-idle CPU states.
   report_active = false
+  ## If true, report if core is isolated
+  report_isolated = true
 `
 
 func (_ *CPUStats) SampleConfig() string {
@@ -57,12 +59,21 @@ func (s *CPUStats) Gather(acc telegraf.Accumulator) error {
 		return fmt.Errorf("error getting CPU info: %s", err)
 	}
 	now := time.Now()
-
+	ctr := 0
 	for _, cts := range times {
 		tags := map[string]string{
 			"cpu": cts.CPU,
 		}
-
+		if s.ReportIsolated == true {
+			if len(s.isolCpus) == 0 {
+				tags["isolated"] = "NA"
+			} else if _, ok := s.isolCpus[ctr] ; ok {
+				tags["isolated"] = "on"
+			} else {
+				tags["isolated"] = "off"
+			}
+		}
+		ctr++
 		total := totalCpuTime(cts)
 		active := activeCpuTime(cts)
 
@@ -146,67 +157,13 @@ func activeCpuTime(t cpu.TimesStat) float64 {
 	return active
 }
 
-func isolCpus() []int {
-	isolCpuInt := []int{}
-	buf, err := ioutil.ReadFile("/sys/devices/system/cpu/isolated")
-	if err != nil {
-		fmt.Errorf("Failed to read /sys/devices/system/cpu/isolated")
-		return []int{}
-	}
-	isolCpu := strings.TrimSpace(string(buf))
-	if isolCpu != "" {
-		isolCpuInt, err = parseCpuset(isolCpu)
-		if err != nil {
-			logger.Errorf("Error parsing isolated CPU set: %s", string(isolCpu))
-			return []int{}
-		}
-	}
-	fmt.Println
-	return isolCpuInt
-}
-
-func parseCpuset(cpu string) ([]int, error) {
-	cpus := []int{}
-	chunks := strings.Split(cpu, ",")
-	for _, chunk := range chunks {
-		if strings.Contains(chunk, "-") {
-			// Range
-			fields := strings.SplitN(chunk, "-", 2)
-			if len(fields) != 2 {
-				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
-			}
-
-			low, err := strconv.Atoi(fields[0])
-			if err != nil {
-				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
-			}
-
-			high, err := strconv.Atoi(fields[1])
-			if err != nil {
-				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
-			}
-
-			for i := low; i <= high; i++ {
-				cpus = append(cpus, i)
-			}
-		} else {
-			// Simple entry
-			nr, err := strconv.Atoi(chunk)
-			if err != nil {
-				return nil, fmt.Errorf("Invalid cpuset value: %s", cpu)
-			}
-			cpus = append(cpus, nr)
-		}
-	}
-	return cpus, nil
-}
-
 func init() {
 	inputs.Add("cpu", func() telegraf.Input {
 		return &CPUStats{
 			PerCPU:   true,
 			TotalCPU: true,
 			ps:       system.NewSystemPS(),
+			isolCpus: isolCpus(),
 		}
 	})
 }
